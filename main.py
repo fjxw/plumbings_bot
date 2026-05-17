@@ -128,7 +128,7 @@ X = vectorizer.fit_transform(X_text)
 clf = LinearSVC(C=1.0)
 clf.fit(X, y)
 
-# --- Генеративная модель (заглушка на случай пустого файла) ---
+# --- Заглушка на случай пустого файла ---
 def generate_answer(replica): return None
 
 # --- Логика Бота с поддержкой пользователей ---
@@ -232,7 +232,7 @@ bot_logic = PlumbingBot()
 
 @bot.message_handler(commands=['start'])
 def start_message(message):
-    bot.send_message(message.chat.id, '👋 Привет! Я помощник по сантехнике. Напишите, что ищете (например, "ванна до 15000"), или отправьте фото/голосовое сообщение.')
+    bot.send_message(message.chat.id, 'Привет! Я помощник по сантехнике. Напишите, что ищете (например, "ванна до 15000"), или отправьте фото/голосовое сообщение.')
 
 @bot.message_handler(content_types=['text'])
 def text_message(message):
@@ -243,7 +243,7 @@ def text_message(message):
         order_id = str(uuid.uuid4())[:8].upper()
         receipt_file = generate_receipt_image(cart, order_id)
         with open(receipt_file, 'rb') as photo:
-            bot.send_photo(message.chat.id, photo, caption=f'✅ Заказ успешно подтвержден! Ожидайте звонка менеджера.')
+            bot.send_photo(message.chat.id, photo, caption=f'Заказ успешно подтвержден! Ожидайте звонка менеджера.')
         os.remove(receipt_file)
         bot_logic.users_state[message.chat.id]['cart'] = [] # очищаем корзину
     else:
@@ -260,13 +260,13 @@ def voice_message(message):
         
         text = recognize_voice(wav_path)
         if not text:
-            bot.reply_to(message, 'Не удалось распознать речь.')
+            bot.reply_to(message, 'Не удалось распознать речь')
             return
             
         response = bot_logic.get_response(text, message.chat.id)
-        bot.reply_to(message, f'🗣 Распознано: {text}\n\n🤖 Ответ:\n{response}')
+        bot.reply_to(message, f'{response}')
     except Exception as e:
-        bot.reply_to(message, f'Ошибка обработки аудио (проверьте ffmpeg и модель Vosk): {e}')
+        bot.reply_to(message, f'Ошибка обработки аудио: {e}')
     finally:
         for p in [ogg_path, wav_path]:
             if os.path.exists(p): os.remove(p)
@@ -279,12 +279,12 @@ def photo_message(message):
         with open(img_path, 'wb') as f: f.write(downloaded_file)
         category = classify_photo(img_path)
         if category and category in PRODUCTS:
-            offer = f'📸 На фото {category[:-1]}! Предлагаем:\n'
+            offer = f'На фото {category[:-1]}! Предлагаем:\n'
             for item in PRODUCTS[category][:2]:
-                offer += f'🔹 {item["name"]} — {item["price"]} руб.\n'
+                offer += f'{item["name"]} — {item["price"]} руб.\n'
             bot.reply_to(message, offer)
         else:
-            bot.reply_to(message, 'Не удалось определить категорию на фото.')
+            bot.reply_to(message, 'Не удалось определить категорию на фото')
     finally:
         if os.path.exists(img_path): os.remove(img_path)
 
