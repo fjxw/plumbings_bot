@@ -1,0 +1,46 @@
+name: Run Plumbing Bot
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch: # Позволяет запускать процесс руками из веб-интерфейса
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Сheckout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install system dependencies (FFmpeg)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg wget unzip
+
+    - name: Download Vosk model
+      run: |
+        # Скачиваем модель для распознавания русской речи прямо на сервер Actions
+        if [ ! -d "vosk-model-small-ru-0.22" ]; then
+          wget https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip
+          unzip vosk-model-small-ru-0.22.zip
+          rm vosk-model-small-ru-0.22.zip
+        fi
+
+    - name: Install Python dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run Telegram Bot
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      run: |
+        python bot.py
