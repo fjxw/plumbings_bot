@@ -1,0 +1,52 @@
+{
+  "ванны": [
+    {"name": "Santek Монако (Акрил)", "price": 14500},
+    {"name": "Triton Стандарт 150 (Акрил)", "price": 18200},
+    {"name": "Roca Continental (Чугун)", "price": 52000},
+    {"name": "Jacob Delafon Soissons (Чугун)", "price": 61500},
+    {"name": "Riho Future (Акрил премиум)", "price": 38000},
+    {"name": "Villeroy & Boch Oberon (Кварил)", "price": 98000},
+    {"name": "Cersanit Santana", "price": 12900},
+    {"name": "Abber Wall-Hung (Отдельностоящая)", "price": 115000}
+  ],
+  "смесители": [
+    {"name": "Grohe BauEdge (Германия)", "price": 6400},
+    {"name": "Hansgrohe Focus 100", "price": 9800},
+    {"name": "Iddis Kitchen Expert (Для кухни)", "price": 7200},
+    {"name": "Lemark Comfort (Чехия)", "price": 5600},
+    {"name": "AM.PM Like (Премиум дизайн)", "price": 12500},
+    {"name": "Milardo Universal (Бюджет)", "price": 3100},
+    {"name": "Rossinka Silvermix", "price": 4200},
+    {"name": "Gessi Goccia (Дизайнерский)", "price": 45000}
+  ],
+  "раковины": [
+    {"name": "Santek Форум-60 (Керамика)", "price": 2800},
+    {"name": "Cersanit Como 80 (Прямоугольная)", "price": 5400},
+    {"name": "Melana Mln-7848 (Накладная)", "price": 7100},
+    {"name": "Jika Lyra (Компакт)", "price": 3600},
+    {"name": "Villeroy & Boch Artis (Цветная)", "price": 44000},
+    {"name": "Dreja Eco 60", "price": 4900},
+    {"name": "Roca Gap (Подвесная)", "price": 8900},
+    {"name": "Aquaton Одри", "price": 6300}
+  ],
+  "унитазы": [
+    {"name": "Sanita Luxe Best (Компакт)", "price": 11200},
+    {"name": "Jika Vega (Чехия)", "price": 9400},
+    {"name": "Geberit Smyle (Подвесной)", "price": 28500},
+    {"name": "Roca Debba (Безободковый)", "price": 15600},
+    {"name": "Vitra S50 (Инсталляция в комплекте)", "price": 32000},
+    {"name": "Cersanit Carina Clean On", "price": 12800},
+    {"name": "Laufen Pro S", "price": 37000},
+    {"name": "Ideal Standard Connect", "price": 21000}
+  ],
+  "душевые": [
+    {"name": "Erlit ER3509TP (Эконом)", "price": 32500},
+    {"name": "Niagara NG-3501 (Без крыши)", "price": 24800},
+    {"name": "River Rein 120 (С гидромассажем)", "price": 48000},
+    {"name": "Grossman GR-121 (Премиум)", "price": 79000},
+    {"name": "Timo T-1100 (Финляндия)", "price": 92000},
+    {"name": "Weltwasser WW500", "price": 56000},
+    {"name": "Deto BM1510 (Без силикона)", "price": 64000},
+    {"name": "Parly B90", "price": 19500}
+  ]
+}
