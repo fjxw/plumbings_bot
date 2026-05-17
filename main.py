@@ -199,44 +199,38 @@ class PlumbingBot:
 
         return random.choice(BOT_CONFIG['failure_phrases'])
 
-# Загружаем предобученную нейросеть (делаем это один раз при запуске)
+# Загружаем модель MobileNetV2 один раз
 model_ai = MobileNetV2(weights='imagenet')
 
 def classify_photo(img_path):
     try:
-        # 1. Подготовка изображения (как в пункте 4 твоего руководства)
-        img = Image.open(img_path).resize((224, 224)) # Размер для MobileNetV2
+        img = Image.open(img_path).convert('RGB').resize((224, 224))
         img_array = tf.keras.preprocessing.image.img_to_array(img)
         img_array = np.expand_dims(img_array, axis=0)
         img_array = preprocess_input(img_array)
 
-        # 2. Распознавание через нейросеть
         preds = model_ai.predict(img_array)
-        results = decode_predictions(preds, top=5)[0] # Получаем топ-5 догадок нейросети
+        results = decode_predictions(preds, top=5)[0]
 
-        # 3. Сопоставляем догадки ИИ с нашими категориями сантехники
-        # Имена классов в ImageNet (база данных ИИ)
+        # Расширенный маппинг (ImageNet -> Твои категории)
         mapping = {
-            'faucet': 'смесители',
-            'tap': 'смесители',
-            'bathtub': 'ванны',
-            'tub': 'ванны',
-            'toilet_seat': 'унитазы',
-            'washbasin': 'раковины',
-            'sink': 'раковины',
-            'shower_curtain': 'душевые',
-            'enclosure': 'душевые'
+            'faucet': 'смесители', 'tap': 'смесители', 'cock': 'смесители',
+            'bathtub': 'ванны', 'tub': 'ванны', 'bathing_tub': 'ванны',
+            'toilet_seat': 'унитазы', 'toilet_tissue': 'унитазы',
+            'washbasin': 'сместители', 'sink': 'раковины', 'basin': 'раковины',
+            'shower_curtain': 'душевые', 'shower_cap': 'душевые', 'enclosure': 'душевые'
         }
 
         for (id, label, prob) in results:
+            label = label.lower()
             if label in mapping:
-                print(f"ИИ определил: {label} с вероятностью {prob:.2f}")
-                return mapping[label]
-
-        # Если ИИ не уверен, возвращаем самую похожую категорию из простых интентов
+                found_cat = mapping[label]
+                print(f"DEBUG: ИИ увидел {label}, маппинг в категорию: {found_cat}")
+                return found_cat
+        
         return None
     except Exception as e:
-        print(f"Ошибка нейросети: {e}")
+        print(f"ОШИБКА НЕЙРОСЕТИ: {e}")
         return None
 
 def recognize_voice(wav_path):
@@ -301,18 +295,39 @@ def voice_message(message):
 def photo_message(message):
     img_path = f'image_{uuid.uuid4()}.jpg'
     try:
-        downloaded_file = bot.download_file(bot.get_file(message.photo[-1].file_id).file_path)
-        with open(img_path, 'wb') as f: f.write(downloaded_file)
+        # 1. Качаем фото
+        file_info = bot.get_file(message.photo[-1].file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        with open(img_path, 'wb') as f:
+            f.write(downloaded_file)
+
+        # 2. Запускаем ИИ из Keras
         category = classify_photo(img_path)
-        if category and category in PRODUCTS:
-            offer = f'На фото {category[:-1]}! Предлагаем:\n'
-            for item in PRODUCTS[category][:2]:
-                offer += f'{item["name"]} — {item["price"]} руб.\n'
-            bot.reply_to(message, offer)
+
+        # Проверка: что у нас вообще есть в базе?
+        available_categories = list(PRODUCTS.keys())
+        print(f"DEBUG: В базе доступны категории: {available_categories}")
+
+        if category:
+            # Если категория есть в базе товаров
+            if category in PRODUCTS:
+                items = PRODUCTS[category]
+                offer = f'Я узнал этот товар, это {category[:-1]}! Вот лучшие варианты для вас:\n\n'
+                for item in items[:3]:
+                    offer += f'🔹 {item["name"]} — {item["price"]} руб.\n'
+                bot.reply_to(message, offer)
+            else:
+                # ИИ узнал товар, но в json-файле нет такой категории
+                bot.reply_to(message, f'Я вижу на фото {category[:-1]}, но сейчас их нет в нашем прайс-листе. Посмотрите наши ванны или смесители!')
         else:
-            bot.reply_to(message, 'Не удалось определить категорию на фото')
+            bot.reply_to(message, 'Не уверен, что это за сантехника. Попробуйте сфотографировать под другим углом или напишите название текстом.')
+
+    except Exception as e:
+        print(f"Ошибка в photo_message: {e}")
+        bot.reply_to(message, 'Произошла техническая ошибка при распознавании.')
     finally:
-        if os.path.exists(img_path): os.remove(img_path)
+        if os.path.exists(img_path):
+            os.remove(img_path)
 
 if __name__ == '__main__':
     print('Бот запущен...')
