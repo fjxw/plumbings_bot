@@ -7,13 +7,15 @@ import wave
 import subprocess
 import uuid
 import telebot
-import imagehash
 from PIL import Image, ImageDraw
 import nltk
 from vosk import Model, KaldiRecognizer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.svm import LinearSVC
 from natasha import Segmenter, MorphVocab, NewsEmbedding, NewsMorphTagger, NewsNERTagger, Doc
+import tensorflow as tf
+from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2, preprocess_input, decode_predictions
+import numpy as np
 
 # --- Параметры проекта ---
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -197,21 +199,45 @@ class PlumbingBot:
 
         return random.choice(BOT_CONFIG['failure_phrases'])
 
-def classify_photo(img_path):
-    if not os.path.isdir(CATEGORY_IMAGES_DIR): return None
-    try:
-        target_hash = imagehash.average_hash(Image.open(img_path).convert('RGB').resize((256, 256)))
-    except Exception: return None
+# Загружаем предобученную нейросеть (делаем это один раз при запуске)
+model_ai = MobileNetV2(weights='imagenet')
 
-    best_score, best_category = None, None
-    for filename in os.listdir(CATEGORY_IMAGES_DIR):
-        key = filename.split('_')[0].lower()
-        if key in CATEGORY_NAME_MAP and CATEGORY_NAME_MAP[key] in PRODUCTS:
-            ref_hash = imagehash.average_hash(Image.open(os.path.join(CATEGORY_IMAGES_DIR, filename)).convert('RGB').resize((256, 256)))
-            score = target_hash - ref_hash
-            if best_score is None or score < best_score:
-                best_score, best_category = score, CATEGORY_NAME_MAP[key]
-    return best_category if (best_score is not None and best_score < 15) else None
+def classify_photo(img_path):
+    try:
+        # 1. Подготовка изображения (как в пункте 4 твоего руководства)
+        img = Image.open(img_path).resize((224, 224)) # Размер для MobileNetV2
+        img_array = tf.keras.preprocessing.image.img_to_array(img)
+        img_array = np.expand_dims(img_array, axis=0)
+        img_array = preprocess_input(img_array)
+
+        # 2. Распознавание через нейросеть
+        preds = model_ai.predict(img_array)
+        results = decode_predictions(preds, top=5)[0] # Получаем топ-5 догадок нейросети
+
+        # 3. Сопоставляем догадки ИИ с нашими категориями сантехники
+        # Имена классов в ImageNet (база данных ИИ)
+        mapping = {
+            'faucet': 'смесители',
+            'tap': 'смесители',
+            'bathtub': 'ванны',
+            'tub': 'ванны',
+            'toilet_seat': 'унитазы',
+            'washbasin': 'раковины',
+            'sink': 'раковины',
+            'shower_curtain': 'душевые',
+            'enclosure': 'душевые'
+        }
+
+        for (id, label, prob) in results:
+            if label in mapping:
+                print(f"ИИ определил: {label} с вероятностью {prob:.2f}")
+                return mapping[label]
+
+        # Если ИИ не уверен, возвращаем самую похожую категорию из простых интентов
+        return None
+    except Exception as e:
+        print(f"Ошибка нейросети: {e}")
+        return None
 
 def recognize_voice(wav_path):
     wf = wave.open(wav_path, 'rb')
