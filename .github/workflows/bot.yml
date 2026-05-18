@@ -28,10 +28,11 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-pip-
 
-    - name: Install system dependencies (FFmpeg)
+    
+    - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y ffmpeg wget unzip
+        sudo apt-get install -y ffmpeg wget unzip fonts-dejavu-core  # Добавили шрифты
 
     - name: Cache Vosk model
       uses: actions/cache@v3
