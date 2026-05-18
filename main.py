@@ -16,6 +16,7 @@ from natasha import Segmenter, MorphVocab, NewsEmbedding, NewsMorphTagger, NewsN
 import tensorflow as tf
 from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2, preprocess_input, decode_predictions
 import numpy as np
+import database
 
 # --- Параметры проекта ---
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -26,14 +27,15 @@ VOSK_MODEL_DIR = os.path.join(PROJECT_ROOT, 'vosk-model-small-ru-0.22')
 
 # Токен теперь берется из переменных окружения (безопасность для GitHub)
 TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', 'YOUR_TELEGRAM_BOT_TOKEN')
+ADMIN_IDS = list(map(int, os.environ.get('TELEGRAM_ADMIN_IDS', '').split(','))) if os.environ.get('TELEGRAM_ADMIN_IDS') else []
 
-# Создаем базовые файлы, если их нет (чтобы не падало в GitHub Actions)
-if not os.path.exists(PRODUCTS_PATH):
-    with open(PRODUCTS_PATH, 'w', encoding='utf-8') as f:
-        json.dump({
-            "ванны": [{"name": "Ванна акриловая", "price": 12000}, {"name": "Ванна чугунная", "price": 25000}],
-            "смесители": [{"name": "Смеситель Grohe", "price": 4500}, {"name": "Смеситель эконом", "price": 1500}]
-        }, f, ensure_ascii=False)
+# Инициализация БД
+database.init_db()
+try:
+    with open(PRODUCTS_PATH, 'r', encoding='utf-8') as f:
+        database.migrate_from_json(json.load(f))
+except:
+    pass
 
 # --- NLP и ML инициализация ---
 segmenter = Segmenter()
@@ -80,33 +82,48 @@ def extract_budget(text):
 
 def generate_receipt_image(items, order_id):
     """ДОП. ФУНКЦИЯ: Рисует красивый чек заказа"""
-    img = Image.new('RGB', (400, 300), color=(255, 255, 255))
+    img = Image.new('RGB', (400, 400), color=(255, 255, 255))
     d = ImageDraw.Draw(img)
+    
+    # Пытаемся загрузить шрифт с поддержкой кириллицы
+    try:
+        from PIL import ImageFont
+        # Пути к шрифтам на Windows и Linux
+        font_paths = ["arial.ttf", "C:/Windows/Fonts/arial.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
+        font = None
+        for path in font_paths:
+            try:
+                font = ImageFont.truetype(path, 18)
+                font_bold = ImageFont.truetype(path, 22)
+                break
+            except:
+                continue
+        if not font:
+            font = ImageFont.load_default()
+            font_bold = font
+    except:
+        font = None
+        font_bold = None
+
     y_text = 20
-    d.text((120, y_text), "ЧЕК ОПЛАТЫ", fill=(0, 0, 0))
+    d.text((120, y_text), "ЧЕК ОПЛАТЫ", fill=(0, 0, 0), font=font_bold)
     y_text += 40
-    d.text((20, y_text), f"Заказ №: {order_id}", fill=(50, 50, 50))
+    d.text((20, y_text), f"Заказ №: {order_id}", fill=(50, 50, 50), font=font)
     y_text += 30
     total = 0
     for item in items:
-        d.text((20, y_text), f"- {item['name']} : {item['price']} руб.", fill=(0, 0, 0))
+        text = f"- {item['name']} : {item['price']} руб."
+        d.text((20, y_text), text, fill=(0, 0, 0), font=font)
         total += item['price']
         y_text += 25
     y_text += 20
     d.line([(20, y_text), (380, y_text)], fill=(0, 0, 0), width=2)
     y_text += 10
-    d.text((20, y_text), f"ИТОГО К ОПЛАТЕ: {total} руб.", fill=(200, 0, 0))
+    d.text((20, y_text), f"ИТОГО К ОПЛАТЕ: {total} руб.", fill=(200, 0, 0), font=font_bold)
     
     filename = f"receipt_{order_id}.jpg"
     img.save(filename)
     return filename
-
-# --- Загрузка данных ---
-try:
-    with open(PRODUCTS_PATH, 'r', encoding='utf-8') as f:
-        PRODUCTS = json.load(f)
-except FileNotFoundError:
-    PRODUCTS = {}
 
 # --- Конфиг интентов и обучение ML ---
 BOT_CONFIG = {
@@ -116,8 +133,14 @@ BOT_CONFIG = {
         'order': {'examples': ['заказать', 'купить', 'оформить'], 'responses': ['Оформляем заказ. Оставьте ваш номер телефона.']},
         'confirm': {'examples': ['подтверждаю', 'верно', 'да'], 'responses': ['Подтверждено!']}
     },
-    'failure_phrases': ['Не совсем понял вас. Попробуйте переформулировать.']
+    'failure_phrases': ['Не совсем понял вас. Попробуйте переформулировать или воспользуйтесь кнопками.']
 }
+
+# --- Дополнительная функция: Поиск ---
+def find_by_name(text):
+    text = text.lower().replace("найди", "").replace("поиск", "").strip()
+    if len(text) < 3: return None
+    return database.search_products(text)
 
 X_text, y = [], []
 for intent, data in BOT_CONFIG['intents'].items():
@@ -137,11 +160,11 @@ def generate_answer(replica): return None
 class PlumbingBot:
     def __init__(self):
         self.stats = {'requests': 0}
-        self.users_state = {} # ДОП. ФУНКЦИЯ: Индивидуальный контекст для каждого чата
+        self.users_state = {}
 
     def get_user_state(self, user_id):
         if user_id not in self.users_state:
-            self.users_state[user_id] = {'context': None, 'cart': []}
+            self.users_state[user_id] = {'context': None, 'cart': [], 'last_cat': None}
         return self.users_state[user_id]
 
     def get_response(self, text, user_id):
@@ -156,15 +179,24 @@ class PlumbingBot:
         intent = clf.predict(vector)[0]
         budget = extract_budget(text)
 
-        # Извлечение сущностей (категорий товара)
-        entities = [cat for cat in PRODUCTS.keys() if nltk.edit_distance(text_lem, cat[:-1]) <= 2 or cat in text_lem]
+        # Поиск по названию
+        search_res = find_by_name(text)
+        if search_res:
+            res = "Вот что я нашел по вашему запросу:\n"
+            for item in search_res[:5]:
+                res += f"🔹 {item['name']} ({item['category']}) — {item['price']} руб.\n"
+            return res
+
+        # Извлечение сущностей из БД
+        all_cats = database.get_categories()
+        entities = [cat for cat in all_cats if nltk.edit_distance(text_lem, cat[:-1]) <= 2 or cat in text_lem]
 
         # Контекст заказа
         if state['context'] == 'confirm':
             if intent in ['confirm']:
                 state['context'] = None
-                return '!CONFIRM!' # Специальный маркер для генерации чека
-            elif intent == 'no':
+                return '!CONFIRM!'
+            elif 'нет' in text.lower():
                 state['context'] = None
                 state['cart'] = []
                 return 'Заказ отменен.'
@@ -175,22 +207,34 @@ class PlumbingBot:
 
         if intent == 'order':
             if entities:
-                state['cart'].append(PRODUCTS[entities[0]][0]) # Добавляем первый товар из категории
+                items = database.get_products_by_category(entities[0])
+                if items:
+                    state['cart'].append(items[0])
+            elif state.get('last_cat'):
+                items = database.get_products_by_category(state['last_cat'])
+                if items:
+                    state['cart'].append(items[0])
+            
+            if not state['cart']:
+                return 'Сначала выберите категорию товаров, например "ванны".'
+                
             state['context'] = 'order'
             return 'Отлично! Для оформления заказа введите ваш номер телефона (10 цифр).'
 
-        # Поиск с учетом бюджета
+        # Поиск в БД
         if entities:
             cat = entities[0]
-            items = PRODUCTS[cat]
-            if budget:
-                items = [i for i in items if i['price'] <= budget]
-                if not items:
+            state['last_cat'] = cat
+            items = database.get_products_by_category(cat, max_price=budget)
+            
+            if not items:
+                if budget:
                     return f'К сожалению, {cat} до {budget} руб. сейчас нет в наличии.'
+                return f'К сожалению, товаров в категории {cat} сейчас нет.'
             
             res = f'Категория "{cat.capitalize()}"{" до " + str(budget) + " руб" if budget else ""}:\n'
-            for item in items[:3]:
-                res += f'🔹 {item["name"]} — {item["price"]} руб.\n'
+            for item in items[:5]:
+                res += f'🔹 {item["name"]} — {item["price"]} руб. (в наличии: {item["stock"]} шт.)\n'
             res += '\nХотите что-то из этого заказать? Напишите "заказать".'
             return res
 
@@ -217,7 +261,7 @@ def classify_photo(img_path):
             'faucet': 'смесители', 'tap': 'смесители', 'cock': 'смесители',
             'bathtub': 'ванны', 'tub': 'ванны', 'bathing_tub': 'ванны',
             'toilet_seat': 'унитазы', 'toilet_tissue': 'унитазы',
-            'washbasin': 'сместители', 'sink': 'раковины', 'basin': 'раковины',
+            'washbasin': 'смесители', 'sink': 'раковины', 'basin': 'раковины',
             'shower_curtain': 'душевые', 'shower_cap': 'душевые', 'enclosure': 'душевые'
         }
 
@@ -252,20 +296,75 @@ bot_logic = PlumbingBot()
 
 @bot.message_handler(commands=['start'])
 def start_message(message):
-    bot.send_message(message.chat.id, 'Привет! Я помощник по сантехнике. Напишите, что ищете (например, "ванна до 15000"), или отправьте фото/голосовое сообщение.')
+    markup = telebot.types.InlineKeyboardMarkup()
+    cats = database.get_categories()
+    for cat in cats:
+        markup.add(telebot.types.InlineKeyboardButton(cat.capitalize(), callback_data=f"cat_{cat}"))
+    
+    bot.send_message(
+        message.chat.id, 
+        'Привет! Я помощник по сантехнике. Выберите категорию или напишите, что ищете (например, "найди Grohe").',
+        reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('cat_'))
+def category_callback(call):
+    cat = call.data.split('_')[1]
+    items = database.get_products_by_category(cat)
+    if not items:
+        bot.answer_callback_query(call.id, "Товаров в этой категории пока нет.")
+        return
+    
+    res = f'Категория "{cat.capitalize()}":\n'
+    for item in items[:5]:
+        res += f'🔹 {item["name"]} — {item["price"]} руб. (в наличии: {item["stock"]} шт.)\n'
+    res += '\nХотите что-то из этого заказать? Напишите "заказать".'
+    
+    bot.send_message(call.message.chat.id, res)
+    bot.answer_callback_query(call.id)
+
+@bot.message_handler(commands=['top'])
+def top_products(message):
+    top = database.get_top_products()
+    res = "🔥 Популярные товары (по наличию):\n"
+    for item in top:
+        res += f"🔹 {item['name']} — {item['price']} руб.\n"
+    bot.send_message(message.chat.id, res)
+
+@bot.message_handler(commands=['feedback'])
+def feedback_start(message):
+    bot.send_message(message.chat.id, "Напишите ваш отзыв о нашей работе:")
+    bot.register_next_step_handler(message, feedback_finish)
+
+def feedback_finish(message):
+    # В реальности можно сохранять в БД или слать админу
+    for admin_id in ADMIN_IDS:
+        bot.send_message(admin_id, f"📣 Новый отзыв от @{message.from_user.username}: {message.text}")
+    bot.send_message(message.chat.id, "Спасибо за ваш отзыв!")
 
 @bot.message_handler(content_types=['text'])
 def text_message(message):
     response = bot_logic.get_response(message.text, message.chat.id)
     if response == '!CONFIRM!':
-        cart = bot_logic.get_user_state(message.chat.id).get('cart', [])
-        if not cart: cart = [{"name": "Товар по акции", "price": 1000}]
+        state = bot_logic.get_user_state(message.chat.id)
+        cart = state.get('cart', [])
+        if not cart:
+            bot.send_message(message.chat.id, "Ваша корзина пуста.")
+            return
+            
         order_id = str(uuid.uuid4())[:8].upper()
+        total_price = sum(item['price'] for item in cart)
+        
+        # Сохраняем в БД и уменьшаем остаток
+        database.save_order(order_id, message.from_user.id, [i['name'] for i in cart], total_price)
+        for item in cart:
+            database.update_stock(item['name'], 1)
+            
         receipt_file = generate_receipt_image(cart, order_id)
         with open(receipt_file, 'rb') as photo:
-            bot.send_photo(message.chat.id, photo, caption=f'Заказ успешно подтвержден! Ожидайте звонка менеджера.')
+            bot.send_photo(message.chat.id, photo, caption=f'Заказ {order_id} подтвержден! Сумма: {total_price} руб.\nОжидайте звонка менеджера.')
         os.remove(receipt_file)
-        bot_logic.users_state[message.chat.id]['cart'] = [] # очищаем корзину
+        state['cart'] = []
     else:
         bot.reply_to(message, response)
 
@@ -304,21 +403,21 @@ def photo_message(message):
         # 2. Запускаем ИИ из Keras
         category = classify_photo(img_path)
 
-        # Проверка: что у нас вообще есть в базе?
-        available_categories = list(PRODUCTS.keys())
-        print(f"DEBUG: В базе доступны категории: {available_categories}")
+        # Проверка по БД
+        all_cats = database.get_categories()
+        print(f"DEBUG: В базе доступны категории: {all_cats}")
 
         if category:
             # Если категория есть в базе товаров
-            if category in PRODUCTS:
-                items = PRODUCTS[category]
+            if category in all_cats:
+                items = database.get_products_by_category(category)
                 offer = f'Я узнал этот товар, это {category[:-1]}! Вот лучшие варианты для вас:\n\n'
                 for item in items[:3]:
-                    offer += f'🔹 {item["name"]} — {item["price"]} руб.\n'
+                    offer += f'🔹 {item["name"]} — {item["price"]} руб. (осталось {item["stock"]} шт.)\n'
                 bot.reply_to(message, offer)
             else:
-                # ИИ узнал товар, но в json-файле нет такой категории
-                bot.reply_to(message, f'Я вижу на фото {category[:-1]}, но сейчас их нет в нашем прайс-листе. Посмотрите наши ванны или смесители!')
+                # ИИ узнал товар, но в БД нет такой категории
+                bot.reply_to(message, f'Я вижу на фото {category}, но сейчас их нет в нашем прайс-листе. Посмотрите наши ванны или смесители!')
         else:
             bot.reply_to(message, 'Не уверен, что это за сантехника. Попробуйте сфотографировать под другим углом или напишите название текстом.')
 
@@ -329,6 +428,91 @@ def photo_message(message):
         if os.path.exists(img_path):
             os.remove(img_path)
 
-if __name__ == '__main__':
-    print('Бот запущен...')
-    bot.polling(none_stop=True)
+@bot.message_handler(commands=['admin'])
+def admin_menu(message):
+    if message.from_user.id not in ADMIN_IDS:
+        bot.reply_to(message, "У вас нет прав администратора.")
+        return
+    
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("Просмотр заказов", "Добавить товар")
+    markup.add("Удалить товар", "Изменить остаток")
+    markup.add("Выход из админки")
+    bot.send_message(message.chat.id, "Меню администратора:", reply_markup=markup)
+
+@bot.message_handler(func=lambda m: m.from_user.id in ADMIN_IDS and m.text == "Просмотр заказов")
+def view_orders(message):
+    orders = database.get_all_orders()
+    if not orders:
+        bot.send_message(message.chat.id, "Заказов пока нет.")
+        return
+    
+    res = "Последние заказы:\n"
+    for order in orders[:10]:
+        res += f"📦 ID: {order[0]} | User: {order[1]} | Сумма: {order[3]} руб. | Дата: {order[4]}\n"
+    bot.send_message(message.chat.id, res)
+
+@bot.message_handler(func=lambda m: m.from_user.id in ADMIN_IDS and m.text == "Добавить товар")
+def add_product_start(message):
+    bot.send_message(message.chat.id, "Введите данные в формате: категория;название;цена;количество")
+    bot.register_next_step_handler(message, add_product_finish)
+
+def add_product_finish(message):
+    try:
+        cat, name, price, stock = message.text.split(';')
+        database.add_product(cat.strip().lower(), name.strip(), int(price), int(stock))
+        bot.send_message(message.chat.id, "Товар успешно добавлен!")
+    except:
+        bot.send_message(message.chat.id, "Ошибка формата. Попробуйте еще раз.")
+
+@bot.message_handler(func=lambda m: m.from_user.id in ADMIN_IDS and m.text == "Удалить товар")
+def delete_product_start(message):
+    bot.send_message(message.chat.id, "Введите точное название товара для удаления:")
+    bot.register_next_step_handler(message, delete_product_finish)
+
+def delete_product_finish(message):
+    database.delete_product(message.text.strip())
+    bot.send_message(message.chat.id, "Товар удален (если он существовал).")
+
+@bot.message_handler(func=lambda m: m.from_user.id in ADMIN_IDS and m.text == "Изменить остаток")
+def change_stock_start(message):
+    bot.send_message(message.chat.id, "Введите: название товара;новое количество")
+    bot.register_next_step_handler(message, change_stock_finish)
+
+def change_stock_finish(message):
+    try:
+        name, stock = message.text.split(';')
+        database.set_stock(name.strip(), int(stock))
+        bot.send_message(message.chat.id, "Остаток обновлен!")
+    except:
+        bot.send_message(message.chat.id, "Ошибка формата.")
+
+@bot.message_handler(func=lambda m: m.from_user.id in ADMIN_IDS and m.text == "Выход из админки")
+def exit_admin(message):
+    bot.send_message(message.chat.id, "Вы вышли из админ-меню.", reply_markup=telebot.types.ReplyKeyboardRemove())
+
+@bot.message_handler(content_types=['text'])
+def text_message(message):
+    response = bot_logic.get_response(message.text, message.chat.id)
+    if response == '!CONFIRM!':
+        state = bot_logic.get_user_state(message.chat.id)
+        cart = state.get('cart', [])
+        if not cart:
+            bot.send_message(message.chat.id, "Ваша корзина пуста.")
+            return
+            
+        order_id = str(uuid.uuid4())[:8].upper()
+        total_price = sum(item['price'] for item in cart)
+        
+        # Сохраняем в БД и уменьшаем остаток
+        database.save_order(order_id, message.from_user.id, [i['name'] for i in cart], total_price)
+        for item in cart:
+            database.update_stock(item['name'], 1)
+            
+        receipt_file = generate_receipt_image(cart, order_id)
+        with open(receipt_file, 'rb') as photo:
+            bot.send_photo(message.chat.id, photo, caption=f'Заказ {order_id} подтвержден! Сумма: {total_price} руб.\nОжидайте звонка менеджера.')
+        os.remove(receipt_file)
+        state['cart'] = []
+    else:
+        bot.reply_to(message, response)
