@@ -516,3 +516,11 @@ def text_message(message):
         state['cart'] = []
     else:
         bot.reply_to(message, response)
+
+if __name__ == '__main__':
+    print("СТАТУС: Бот запущен и начинает прослушивание...")
+    
+    try:
+        bot.polling(none_stop=True, interval=0, timeout=20)
+    except Exception as e:
+        print(f"КРИТИЧЕСКАЯ ОШИБКА ПРИ РАБОТЕ: {e}")

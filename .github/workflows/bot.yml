@@ -12,14 +12,40 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    # 1. Сначала забираем код
     - name: Сheckout repository
       uses: actions/checkout@v3
 
+    # 2. Сразу ставим системные пакеты (FFmpeg для голоса и шрифты для Чека)
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg wget unzip fonts-dejavu-core
+
+    # 3. Настраиваем Python
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
 
+    # 4. Проверяем кэш для модели Vosk (она весит много, лучше проверить сразу)
+    - name: Cache Vosk model
+      id: cache-vosk
+      uses: actions/cache@v3
+      with:
+        path: vosk-model-small-ru-0.22
+        key: ${{ runner.os }}-vosk-model
+
+    # 5. Скачиваем Vosk, если его нет в кэше
+    - name: Download Vosk model if not cached
+      if: steps.cache-vosk.outputs.cache-hit != 'true'
+      run: |
+        echo "Vosk model not found in cache. Downloading..."
+        wget https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip
+        unzip vosk-model-small-ru-0.22.zip
+        rm vosk-model-small-ru-0.22.zip
+
+    # 6. Кэшируем установленные Python библиотеки
     - name: Cache Python dependencies
       uses: actions/cache@v3
       with:
@@ -28,49 +54,27 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-pip-
 
-    
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y ffmpeg wget unzip fonts-dejavu-core  # Добавили шрифты
-
-    - name: Cache Vosk model
-      uses: actions/cache@v3
-      with:
-        path: vosk-model-small-ru-0.22
-        key: ${{ runner.os }}-vosk-model
-
-    - name: Download Vosk model if not cached
-      run: |
-        if [ ! -d "vosk-model-small-ru-0.22" ]; then
-          echo "Vosk model not found in cache. Downloading..."
-          wget https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip
-          unzip vosk-model-small-ru-0.22.zip
-          rm vosk-model-small-ru-0.22.zip
-        else
-          echo "Vosk model found in cache."
-        fi
-
+    # 7. Устанавливаем зависимости (сначала тяжелый TensorFlow)
     - name: Install dependencies
       run: |
         pip install --upgrade pip
         pip install tensorflow-cpu 
         pip install -r requirements.txt
 
-    - name: Initialize Database
-      run: python database.py
-
+    # 8. Работаем с базой данных SQLite
+    # Пытаемся восстановить базу из кэша (чтобы остатки товаров сохранялись)
     - name: Cache SQLite Database
       uses: actions/cache@v3
       with:
-        path: bot_database.db
-        key: ${{ runner.os }}-sqlite-db
+        path: plumbing_shop.db
+        key: ${{ runner.os }}-sqlite-db-${{ github.run_id }}
         restore-keys: |
-          ${{ runner.os }}-sqlite-db
+          ${{ runner.os }}-sqlite-db-
 
+    # 9. Запуск бота
     - name: Run Telegram Bot
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_ADMIN_IDS: ${{ secrets.TELEGRAM_ADMIN_IDS }}
+        # В коде мы используем ADMIN_ID, убедись что секрет совпадает или прописан в коде
       run: |
         python main.py
