@@ -20,17 +20,34 @@ jobs:
       with:
         python-version: '3.10'
 
+    - name: Cache Python dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
     - name: Install system dependencies (FFmpeg)
       run: |
         sudo apt-get update
         sudo apt-get install -y ffmpeg wget unzip
 
-    - name: Download Vosk model
+    - name: Cache Vosk model
+      uses: actions/cache@v3
+      with:
+        path: vosk-model-small-ru-0.22
+        key: ${{ runner.os }}-vosk-model
+
+    - name: Download Vosk model if not cached
       run: |
         if [ ! -d "vosk-model-small-ru-0.22" ]; then
+          echo "Vosk model not found in cache. Downloading..."
           wget https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip
           unzip vosk-model-small-ru-0.22.zip
           rm vosk-model-small-ru-0.22.zip
+        else
+          echo "Vosk model found in cache."
         fi
 
     - name: Install dependencies
@@ -41,6 +58,14 @@ jobs:
 
     - name: Initialize Database
       run: python database.py
+
+    - name: Cache SQLite Database
+      uses: actions/cache@v3
+      with:
+        path: bot_database.db
+        key: ${{ runner.os }}-sqlite-db
+        restore-keys: |
+          ${{ runner.os }}-sqlite-db
 
     - name: Run Telegram Bot
       env:
